@@ -9,6 +9,7 @@
 *.la
 autom4te.cache/*
 *.in
+*.pc
 */.deps/*
 m4/*
 swig/*
