@@ -335,6 +335,9 @@ static usbmuxd_device_info_t *device_info_from_device_record(struct usbmuxd_devi
 	return devinfo;
 }
 
+static int debug_data = 0;
+static int checked_debug_data = 0;
+
 static int receive_packet(int sfd, struct usbmuxd_header *header, void **payload, int timeout)
 {
 	int recv_len;
@@ -378,6 +381,17 @@ static int receive_packet(int sfd, struct usbmuxd_header *header, void **payload
 	if (hdr.message == MESSAGE_PLIST) {
 		char *message = NULL;
 		plist_t plist = NULL;
+
+		if(checked_debug_data == 0) {
+		    char *dbgvar = getenv("IDEVICE_DEBUG_PAYLOAD");
+		    debug_data = dbgvar != NULL && strlen(dbgvar) > 0 ? 1 : 0;
+		    checked_debug_data = 1;
+		}
+
+		if(debug_data) {
+    		printf("---- payload ----\n%s\n---- END payload ----\n", payload_loc);
+        }
+
 		plist_from_xml(payload_loc, payload_size, &plist);
 		free(payload_loc);
 
