@@ -38,19 +38,16 @@
 #include <errno.h>
 #include <getopt.h>
 #ifdef WIN32
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
 typedef unsigned int socklen_t;
 #else
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <sys/un.h>
-#include <arpa/inet.h>
-#include <pthread.h>
-#include <netinet/in.h>
 #include <signal.h>
 #endif
-#include "socket.h"
+#include <libimobiledevice-glue/socket.h>
+#include <libimobiledevice-glue/thread.h>
 #include "usbmuxd.h"
 
 #ifndef ETIMEDOUT
@@ -68,9 +65,9 @@ struct client_data {
 };
 
 #define CDATA_FREE(x) if (x) { \
-	if (x->fd > 0) socket_close(x->fd); \
-	if (x->sfd > 0) socket_close(x->sfd); \
-	free(x->udid); \
+	if ((x)->fd > 0) socket_close((x)->fd); \
+	if ((x)->sfd > 0) socket_close((x)->sfd); \
+	free((x)->udid); \
 	free(x); \
 }
 
@@ -112,7 +109,8 @@ static void *acceptor_thread(void *arg)
 			if (dev_list[i].conn_type == CONNECTION_TYPE_USB && (cdata->lookup_opts & DEVICE_LOOKUP_USBMUX)) {
 				dev = &(dev_list[i]);
 				break;
-			} else if (dev_list[i].conn_type == CONNECTION_TYPE_NETWORK && (cdata->lookup_opts & DEVICE_LOOKUP_NETWORK)) {
+			}
+			if (dev_list[i].conn_type == CONNECTION_TYPE_NETWORK && (cdata->lookup_opts & DEVICE_LOOKUP_NETWORK)) {
 				dev = &(dev_list[i]);
 				break;
 			}
@@ -131,15 +129,15 @@ static void *acceptor_thread(void *arg)
 		struct sockaddr_storage saddr_storage;
 		struct sockaddr* saddr = (struct sockaddr*)&saddr_storage;
 
-		if (((char*)dev->conn_data)[1] == 0x02) { // AF_INET
+		if (dev->conn_data[1] == 0x02) { // AF_INET
 			saddr->sa_family = AF_INET;
-			memcpy(&saddr->sa_data[0], (char*)dev->conn_data + 2, 14);
+			memcpy(&saddr->sa_data[0], (uint8_t*)dev->conn_data+2, 14);
 		}
-		else if (((char*)dev->conn_data)[1] == 0x1E) { //AF_INET6 (bsd)
+		else if (dev->conn_data[1] == 0x1E) { //AF_INET6 (bsd)
 #ifdef AF_INET6
 			saddr->sa_family = AF_INET6;
 			/* copy the address and the host dependent scope id */
-			memcpy(&saddr->sa_data[0], (char*)dev->conn_data + 2, 26);
+			memcpy(&saddr->sa_data[0], (uint8_t*)dev->conn_data+2, 26);
 #else
 			fprintf(stderr, "ERROR: Got an IPv6 address but this system doesn't support IPv6\n");
 			CDATA_FREE(cdata);
@@ -147,7 +145,7 @@ static void *acceptor_thread(void *arg)
 #endif
 		}
 		else {
-			fprintf(stderr, "Unsupported address family 0x%02x\n", ((char*)dev->conn_data)[1]);
+			fprintf(stderr, "Unsupported address family 0x%02x\n", dev->conn_data[1]);
 			CDATA_FREE(cdata);
 			return NULL;
 		}
@@ -449,37 +447,31 @@ int main(int argc, char **argv)
 		}
 		for (i = 0; i < num_listen; i++) {
 			if (FD_ISSET(listen_sock[i].fd, &read_fds)) {
-#ifdef WIN32
-				HANDLE acceptor = NULL;
-#else
-				pthread_t acceptor;
-#endif
+				THREAD_T acceptor = THREAD_T_NULL;
 				struct client_data *cdata;
 				int c_sock = socket_accept(listen_sock[i].fd, listen_port[listen_sock[i].index]);
 				if (c_sock < 0) {
 					fprintf(stderr, "accept: %s\n", strerror(errno));
 					break;
+				}
+				printf("New connection for %d->%d, fd = %d\n", listen_port[listen_sock[i].index], device_port[listen_sock[i].index], c_sock);
+				cdata = (struct client_data*)malloc(sizeof(struct client_data));
+				if (!cdata) {
+					socket_close(c_sock);
+					fprintf(stderr, "ERROR: Out of memory\n");
+					free(device_udid);
+					return -1;
+				}
+				cdata->fd = c_sock;
+				cdata->sfd = -1;
+				cdata->udid = (device_udid) ? strdup(device_udid) : NULL;
+				cdata->lookup_opts = lookup_opts;
+				cdata->device_port = device_port[listen_sock[i].index];
+
+				if (thread_new(&acceptor, acceptor_thread, cdata) == 0) {
+					thread_detach(acceptor);
 				} else {
-					printf("New connection for %d->%d, fd = %d\n", listen_port[listen_sock[i].index], device_port[listen_sock[i].index], c_sock);
-					cdata = (struct client_data*)malloc(sizeof(struct client_data));
-					if (!cdata) {
-						socket_close(c_sock);
-						fprintf(stderr, "ERROR: Out of memory\n");
-						free(device_udid);
-						return -1;
-					}
-					cdata->fd = c_sock;
-					cdata->sfd = -1;
-					cdata->udid = (device_udid) ? strdup(device_udid) : NULL;
-					cdata->lookup_opts = lookup_opts;
-					cdata->device_port = device_port[listen_sock[i].index];
-#ifdef WIN32
-					acceptor = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)acceptor_thread, cdata, 0, NULL);
-					CloseHandle(acceptor);
-#else
-					pthread_create(&acceptor, NULL, acceptor_thread, cdata);
-					pthread_detach(acceptor);
-#endif
+					fprintf(stderr, "ERROR: Failed to created acceptor thread!\n");
 				}
 			}
 		}
