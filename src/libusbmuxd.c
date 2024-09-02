@@ -287,17 +287,6 @@ static usbmuxd_device_info_t *device_info_from_plist(plist_t props)
 					const char *netaddr = plist_get_data_ptr(n, &addr_len);
 					if (netaddr && addr_len > 0 && addr_len < sizeof(devinfo->conn_data)) {
                         memcpy(devinfo->conn_data, netaddr, addr_len);
-
-                        // Repair corrupt records
-                        if(devinfo->conn_data[1] == 0) {
-                            if(devinfo->conn_data[0] == 0x02) {
-                                devinfo->conn_data[0] = 0x10; // Overall Length
-                                devinfo->conn_data[1] = 0x02; // AF_INET6
-                            } else if(devinfo->conn_data[0] == 0x17) {
-                                devinfo->conn_data[0] = 0x1c; // Overall Length
-                                devinfo->conn_data[1] = 0x1e; // AF_INET6
-                            }
-                        }
 					}
 				}
 			} else {
